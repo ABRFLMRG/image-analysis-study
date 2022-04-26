@@ -14,7 +14,9 @@ The different ini files refer to different object clustering and dynamic range (
 ## FISH in *C. elegans Images* (punctate, sub-diffraction staining)
 FISH images can be produced using [this singularity container](https://s3.msi.umn.edu/umii-tpengo-containers/cytogen-ubuntu-2020-05-11-c72890b5b480.sif). We are currently working to create a codebase version that can then be containerized, but in the meantime, this should work. You can replace the ini file with any of the `celegans` ini files in this repository. The celegans files call a specific PSF files that can be downloaded using the link, above.
 
-Example code: 
-`singularity exec -B /data/tpengo /home/umii/tpengo/SW/cytogen-ubuntu-2020-05-11-c72890b5b480.sif cytopacq -c celegans_dyn-10_ceff-0.ini -l ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_label.ics -f ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_final.ics -e ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_error.log -w ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_warning.log -d /usr/local/plugins`
+Example code
+```
+singularity exec -B /data/tpengo /home/umii/tpengo/SW/cytogen-ubuntu-2020-05-11-c72890b5b480.sif cytopacq -c celegans_dyn-10_ceff-0.ini -l ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_label.ics -f ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_final.ics -e ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_error.log -w ./20201105/celegans_dyn-10_ceff-0/celegans_dyn-10_ceff-0_warning.log -d /usr/local/plugins
+```
 
 The different ini files refer to different object clustering and dynamic range (~signal-to-noise). In the filenames, `ceff` indicates clustering (00 = low clustering) and `dyn` indicates dynamic range (90 = high dynamic range, high SNR).
