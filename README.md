@@ -2,7 +2,10 @@
 
 Configuration files for the `Cytopacq` software, used to generate the original images used in the [LMRG Image Analysis Study](https://sites.google.com/view/lmrg-image-analysis-study). 
 
-You can find all the original image files, label (ground truth) files, and PSF files used in the study [here](https://drive.google.com/drive/folders/11RM65Rshpv8m5bZbucgzis-BCOdSomyf?usp=sharing). The images will be archived in a more permanent location in the near future.
+You can find all the original image files, label (ground truth) files, and PSF files used in the study here: 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6560910.svg)](https://doi.org/10.5281/zenodo.6560910)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.6560759.svg)](https://doi.org/10.5281/zenodo.6560759)
+
 
 ## Nuclei Images
 Nuclei images can be produced using a containerized version of `Cytopacq` here: [https://github.com/tp81/cytopacq](https://github.com/tp81/cytopacq). The page also contains brief instructions. Use the code under "Using the Software," replacing the ini file name with the `hl60` ini file that you wish to use. The nuclei ini files call a specific PSF file that can be downloaded using the link, above. 
