@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import threadpoolctl
-from pycpd import RigidRegistration
+
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from sklearn.neighbors import KDTree
@@ -190,8 +190,7 @@ def register_guided(args: tuple[str, None]):
     results = {}
     results['filename'] = pathlib.Path(f).name
 
-    # Store the coordinates of removed outliers.
-    outliers = {}
+    category = re.match(r'.*(fish|nuclei).*', f.lower())
 
     td_orig = test_data[test_data.loc[:, 'csv_path'] == f]
     gt_orig = ground_truth_coords[
@@ -199,107 +198,44 @@ def register_guided(args: tuple[str, None]):
     ][['x', 'y', 'z']].values.astype('float64')
     gt = gt_orig.copy()
 
-    # Initialize the result as an "empty" result.
-    results['result'] = RegistrationResults(**{
-        'test_coords_tf': None,
-        'test_tf': None,
-        'test_coords': td_orig,
-        'ground_truth_coords': gt_orig,
-        'outliers': outliers,
-    })
-
     try:
-        td_orig = td_orig[['x', 'y', 'z']].values.astype('float64')
-        td = td_orig.copy()
-
-        scale = gt[:, :2].std(axis=0).mean() / td[:, :2].std(axis=0).mean()
-        translation = np.array([(td[:, :2].mean(axis=0) - gt[:, :2].mean(axis=0))])
-
-        # Initialize a boolean array used to relax the outlier removal.
-        select = np.array([False])
-        # Keep track of registration iterations after removing outliers.
-        iteration = 1
-
-        category = re.match(r'.*(fish|nuclei).*', f.lower())
+        test_coords_tf = td_orig[['x', 'y', 'z']].values.astype('float64').copy()
 
         flip_ids = ['R_3lAJ9xY4kGlL99f']
         for fid in flip_ids:
             if fid in f:
-                td[:, :2] = np.hstack([td[:, 0].mean() - td[:, [0]], td[:, [1]]])
+                test_coords_tf[:, :2] = np.hstack([test_coords_tf[:, 0].mean() - test_coords_tf[:, [0]], test_coords_tf[:, [1]]])
 
-                td[:, :2] = (np.array([[0.0, 1.0],
-                                      [-1.0, 0.0]]) @ td[:, :2].T).T
+                test_coords_tf[:, :2] = (np.array([[0.0, 1.0],
+                                                   [-1.0, 0.0]]) @ test_coords_tf[:, :2].T).T
 
-        while (~select).sum() > 0:
-            reg = RigidRegistration(
-                X=gt[:, :2],
-                Y=td[:, :2],
-                s=scale,
-                t=translation,
-                **registration_params,
-            )
-            test_coords_tf, test_tf = reg.register()
-
-            # Put the z-direction back in to not have to keep track of the indices.
-            test_coords_tf = np.hstack([test_coords_tf[:, :3], td[:, 2:3]]).copy()
-
-            if 'nuclei' in f.lower():
-                break
-
-            dm = distance_matrix(gt[:, :2], test_coords_tf[:, :2])
-            lsa = linear_sum_assignment(dm)
-            distances = dm[lsa[0], lsa[1]]
-
-            select = distances <= 2
-
-            outliers[iteration] = test_coords_tf[lsa[1][~select], :]
-            td = td[lsa[1][select], :]
-            test_coords_tf = test_coords_tf[lsa[1][select], :]
-
-            if category is not None:
-                scale_xy = scales_map_xy[category.group(1)]
-
-                # Use the scale parameter of the transformation to identify the
-                # misaligned data. If the scale rounds to 1.0, don't use the
-                # transformed coordinates.
-                new_test_coords = td[:, :2].copy()
-                if np.isclose(test_tf[0], 1.0, rtol=0.1, atol=0.02):
-                    new_test_coords = new_test_coords + np.array([get_translation((test_coords_tf, test_tf))])
-                elif np.isclose(test_tf[0], scale_xy, rtol=0.1, atol=0.02):
-                    new_test_coords = scale_xy * new_test_coords
-            
-                td[:, :2] = new_test_coords.copy()
-                iteration += 1
-
-                results['result'] = RegistrationResults(**{
-                    'test_coords_tf': test_coords_tf,
-                    'test_tf': test_tf,
-                    'test_coords': td,
-                    'ground_truth_coords': gt,
-                    'outliers': outliers,
-                })
-
-    except np.linalg.LinAlgError as lae:
-        print(lae, pathlib.Path(f).relative_to(pathlib.Path(f).parent.parent))
+    except ValueError as ve:
         results['result'] = RegistrationResults(**{
             'test_coords_tf': None,
             'test_tf': None,
             'test_coords': td_orig,
             'ground_truth_coords': gt,
-            'outliers': outliers,
+            'outliers': {},
         })
+        return results
+  
 
-    except ValueError as ve:
-        print(ve, pathlib.Path(f).relative_to(pathlib.Path(f).parent.parent))
-        results['result'] = RegistrationResults(**{
-            'test_coords_tf': None,
-            'test_tf': None,
-            'test_coords': td_orig,
-            'ground_truth_coords': gt_orig,
-            'outliers': outliers,
-        })
+    # TODO: Remove the extra factor on scale. This is just a positive
+    # control to see if the results change.
+    scale = gt[:, :2].std(axis=0).mean() / test_coords_tf[:, :2].std(axis=0).mean()
+    test_coords_tf[:, :2] *= scale
 
-    print(f'{pathlib.Path(f).relative_to(pathlib.Path(f).parent.parent)} has been registered.')
+    translation = np.array((gt[:, :2].mean(axis=0) - test_coords_tf[:, :2].mean(axis=0)))
+    test_coords_tf[:, :2] += translation 
+
+    results['result'] = RegistrationResults(**{
+        'test_coords_tf': test_coords_tf,
+        'test_tf': (scale, np.array([[1.0, 0.0], [0.0, 1.0]]), translation),
+        'test_coords': td_orig,
+        'ground_truth_coords': gt,
+        'outliers': {},
+    })
+
     return results
 
 
@@ -333,6 +269,11 @@ results_df.loc[:, ['translation_x', 'translation_y']] = np.vstack(
 # Get statistics on the results grouped but anonymized submitter names.
 
 results_summary = results_df.drop('result', axis=1)
+
+if 'results_summary' in globals():
+    results_summary.to_csv('./results_summary.csv', index=False) # OUTPUT
+results_summary = pd.read_csv('./results_summary.csv')
+
 
 results_summary['id'] = (
     results_summary['filename']
@@ -412,14 +353,14 @@ def check_if_close(x):
     )
 
 
-with pd.option_context('display.max_rows', 150):
-    print(
-        results_df_success
-        .groupby(
-            ['category', 'dataset', 'filename']
-        )
-        .apply(check_if_close)
-    )
+# with pd.option_context('display.max_rows', 150):
+#     print(
+#         results_df_success
+#         .groupby(
+#             ['category', 'dataset', 'filename']
+#         )
+#         .apply(check_if_close)
+#     )
 
 
 # The point-spread function sizes are
