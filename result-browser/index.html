@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Result Browser</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Ground Truth Overlap Viewer</h1>
+        <p>Use ↑/↓ to change participant, Shift+1..8 to change dataset type.</p>
+      </div>
+      <div class="selection">
+        <div>
+          <span class="label">Participant</span>
+          <strong id="participantLabel">–</strong>
+        </div>
+        <div>
+          <span class="label">Dataset</span>
+          <strong id="datasetLabel">–</strong>
+        </div>
+      </div>
+    </header>
+
+    <section class="browser-body">
+      <aside class="selector-pane">
+        <div class="list-block">
+          <label for="participantList">Participants</label>
+          <select id="participantList" size="12"></select>
+        </div>
+        <div class="list-block">
+          <label for="datasetList">Datasets</label>
+          <select id="datasetList" size="8"></select>
+        </div>
+      </aside>
+
+      <div class="plots-column">
+        <section class="controls">
+          <label class="checkbox-label">
+            <input type="checkbox" id="flipXY" />
+            Flip XY axes
+          </label>
+          <label>
+            XY scale
+            <input type="number" id="xyScale" step="0.1" min="0.01" value="1" />
+          </label>
+          <label>
+            Z scale
+            <input type="number" id="zScale" step="0.1" min="0.01" value="1" />
+          </label>
+          <label>
+            Match threshold (&micro;m)
+            <input type="number" id="matchThreshold" step="0.01" min="0.01" value="0.2" />
+          </label>
+        </section>
+
+        <div class="control-buttons">
+          <button type="button" id="resetZoomBtn" title="Reset zoom">
+            &#8962; Reset Zoom
+          </button>
+          <button type="button" id="computeMetricsBtn">Compute Assignment</button>
+          <button type="button" id="downloadSettingsBtn">Download Settings</button>
+          <button type="button" id="uploadSettingsBtn">Load Settings</button>
+          <input type="file" id="settingsFileInput" accept=".csv,text/csv" hidden />
+        </div>
+
+        <div id="metricsOutput"></div>
+
+        <section id="plotGrid">
+          <div class="plot-panel">
+            <h2>XY Plane</h2>
+            <canvas id="xyPlot" width="500" height="500"></canvas>
+          </div>
+          <div class="plot-panel">
+            <h2>XZ Plane</h2>
+            <canvas id="xzPlot" width="500" height="500"></canvas>
+          </div>
+          <div class="plot-panel">
+            <h2>YZ Plane</h2>
+            <canvas id="yzPlot" width="500" height="500"></canvas>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="status"></section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
