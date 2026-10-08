@@ -1,38 +1,17 @@
 # LMRG Study 4 Registration
-#
-# Author: Angel Mancebo (mance012@umn.edu)
 
 import pathlib
 import re
 import time
 from collections import namedtuple
-from multiprocessing import Pool
 from pathlib import Path
+from typing import Hashable
 
 import numpy as np
 import pandas as pd
-import threadpoolctl
-
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from sklearn.neighbors import KDTree
-
-registration_params = {
-    'max_iterations': 1_000_000,
-}
-thread_params = {
-    'limits': 1,
-}
-parallel_pool_params = {
-    # Set 'processes' to fewer than the number of cores.
-    'processes': 30,
-    'initializer': None,
-    'initargs': [],
-    'maxtasksperchild': None,
-}
-pmap_params = {
-    'chunksize': 1,
-}
 
 # ## Helper functions
 # Define helper functions for extracting scale, angle, and translation from the registration results.
@@ -87,22 +66,20 @@ friendly_names = {
 
     }
 
-
-psf_map_xy = {  # micrometers, max measured (not theoretical)
+PSF_MAP_XY = {  # micrometers, max measured (not theoretical)
     'fish': 0.290,
     'nuclei': None,
 }
-psf_map_z = {  # micrometers, measured (not theoretical)
+PSF_MAP_Z = {  # micrometers, measured (not theoretical)
     'fish': 0.182,
     'nuclei': None,
 }
-
 
 # ## Load data
 # Load the ground truth data.
 
 ground_truth_coords = pd.read_csv(
-    'ground_truth_coords.csv',
+    'ground_truth/ground_truth_coords_scale_corrected.csv',
     index_col=0,
 )
 ground_truth_coords['ground_truth_name'] = (
@@ -110,56 +87,50 @@ ground_truth_coords['ground_truth_name'] = (
     .apply(lambda filename: friendly_names[pathlib.Path(filename).name])
 )
 
-
 # Load the test (submission) data and assigned it the ground truth by its friendly name.
-
-test_data = pd.read_csv('./coordinate_data_deidentified.csv')
-test_data['filename'] = test_data['csv_path'].apply(lambda f: Path(f).name)
-for f, d in test_data.groupby('csv_path'):
-    regex = re.match(r'.*((?:fish|nuclei)[1-4]).*', f.lower())
-    if regex is not None:
-        name = regex.group(1)
-        test_data.loc[
-            test_data.loc[:, 'csv_path'] == f, 'ground_truth_name'
-        ] = name
-    elif 'fish' in f.lower():
-        regex = re.match(r'.*(Q1[0-4]\.13).*', f)
+raw_data = pd.read_csv('./all_data_deidentified.csv').dropna(subset=['x', 'y', 'z'])
+corrected_data = pd.read_csv('./all_data_deidentified_scale_corrected.csv')
+registered_data = pd.read_csv('./all_data_deidentified_scale_corrected_with_registration.csv')
+for test_data in [raw_data, corrected_data, registered_data]:
+    test_data['filename'] = test_data['csv_path'].apply(lambda f: Path(f).name)
+    for f, d in test_data.groupby('csv_path'):
+        regex = re.match(r'.*((?:fish|nuclei)[1-4]).*', str(f).lower())
         if regex is not None:
-            name = friendly_names[regex.group(1)]
+            name = regex.group(1)
             test_data.loc[
                 test_data.loc[:, 'csv_path'] == f, 'ground_truth_name'
             ] = name
-    elif 'nuclei' in f.lower():
-        regex = re.match(r'.*(Q[6-9]\.13).*', f)
-        if regex is not None:
-            name = friendly_names[regex.group(1)]
-            test_data.loc[
-                test_data.loc[:, 'csv_path'] == f, 'ground_truth_name'
-            ] = name
-    else:
-        print(f)
+        elif 'fish' in str(f).lower():
+            regex = re.match(r'.*(Q1[0-4]\.13).*', str(f))
+            if regex is not None:
+                name = friendly_names[regex.group(1)]
+                test_data.loc[
+                    test_data.loc[:, 'csv_path'] == f, 'ground_truth_name'
+                ] = name
+        elif 'nuclei' in str(f).lower():
+            regex = re.match(r'.*(Q[6-9]\.13).*', str(f))
+            if regex is not None:
+                name = friendly_names[regex.group(1)]
+                test_data.loc[
+                    test_data.loc[:, 'csv_path'] == f, 'ground_truth_name'
+                ] = name
+        else:
+            print('No match:', f)
 
-
-with pd.option_context('display.max_colwidth', 1024):
-    print(test_data[test_data['x'].isna()].dropna(axis=1, how='all'))
-
-
-# Ensure that each `ground_truth_name` has been assigned, that is, no `ground_truth_name` is empty. `True` if correct.
-
-for f in test_data['csv_path'].unique():
-    if 'fish' not in f.lower():
-        continue
-    try:
-        td_orig = test_data[test_data.loc[:, 'csv_path'] == f]
-        gt_orig = ground_truth_coords[
-            ground_truth_coords['ground_truth_name'] == td_orig['ground_truth_name'].iloc[0]
-        ][['x', 'y', 'z']].values.astype('float32')
-        td_orig = td_orig[['x', 'y', 'z']].values.astype('float32')
-        if (re_match := re.match(r'(R_[0-9A-Za-z]+)_.*', pathlib.Path(f).name)) is not None:
-            print(re_match.group(1))
-    except ValueError as ve:
-        print(ve, f)
-
+    # Ensure that each `ground_truth_name` has been assigned, that is, no `ground_truth_name` is empty. `True` if correct
+    for f in test_data['csv_path'].unique():
+        if 'fish' not in f.lower():
+            continue
+        try:
+            td_orig = test_data[test_data.loc[:, 'csv_path'] == f]
+            gt_orig = ground_truth_coords[
+                ground_truth_coords['ground_truth_name'] == td_orig['ground_truth_name'].iloc[0]
+            ][['x', 'y', 'z']].values.astype('float32')
+            td_orig = td_orig[['x', 'y', 'z']].values.astype('float32')
+            if (re_match := re.match(r'(R_[0-9A-Za-z]+)_.*', pathlib.Path(f).name)) is not None:
+                print(re_match.group(1))
+        except ValueError as ve:
+            print('ValueError:', ve)
 
 # ## Registration (only in x-y)
 # Perform rigid registration (with scale) on all the data sets, then extract the parameters.
@@ -174,7 +145,6 @@ scales_map_z = {  # micrometers
     'nuclei': 0.200,
 }
 
-
 RegistrationResults = namedtuple('RegistrationResults', [
     'test_coords_tf',
     'test_tf',
@@ -184,13 +154,11 @@ RegistrationResults = namedtuple('RegistrationResults', [
 ])
 
 
-def register_guided(args: tuple[str, None]):
+def register(args: tuple[Hashable, pd.DataFrame]) -> 'dict[str, str | RegistrationResults]':
     f, _ = args
 
     results = {}
-    results['filename'] = pathlib.Path(f).name
-
-    category = re.match(r'.*(fish|nuclei).*', f.lower())
+    results['filename'] = pathlib.Path(str(f)).name
 
     td_orig = test_data[test_data.loc[:, 'csv_path'] == f]
     gt_orig = ground_truth_coords[
@@ -198,118 +166,51 @@ def register_guided(args: tuple[str, None]):
     ][['x', 'y', 'z']].values.astype('float64')
     gt = gt_orig.copy()
 
-    try:
-        test_coords_tf = td_orig[['x', 'y', 'z']].values.astype('float64').copy()
-
-        flip_ids = ['R_3lAJ9xY4kGlL99f']
-        for fid in flip_ids:
-            if fid in f:
-                test_coords_tf[:, :2] = np.hstack([test_coords_tf[:, 0].mean() - test_coords_tf[:, [0]], test_coords_tf[:, [1]]])
-
-                test_coords_tf[:, :2] = (np.array([[0.0, 1.0],
-                                                   [-1.0, 0.0]]) @ test_coords_tf[:, :2].T).T
-
-    except ValueError as ve:
-        results['result'] = RegistrationResults(**{
-            'test_coords_tf': None,
-            'test_tf': None,
-            'test_coords': td_orig,
-            'ground_truth_coords': gt,
-            'outliers': {},
-        })
-        return results
-  
-
-    # TODO: Remove the extra factor on scale. This is just a positive
-    # control to see if the results change.
-    scale = gt[:, :2].std(axis=0).mean() / test_coords_tf[:, :2].std(axis=0).mean()
-    test_coords_tf[:, :2] *= scale
-
-    translation = np.array((gt[:, :2].mean(axis=0) - test_coords_tf[:, :2].mean(axis=0)))
-    test_coords_tf[:, :2] += translation 
-
     results['result'] = RegistrationResults(**{
-        'test_coords_tf': test_coords_tf,
-        'test_tf': (scale, np.array([[1.0, 0.0], [0.0, 1.0]]), translation),
-        'test_coords': td_orig,
+        'test_coords_tf': td_orig.loc[:, ['x', 'y', 'z']].dropna().copy(deep=True).values,
+        'test_tf': None,
+        'test_coords': td_orig.loc[:, ['x', 'y', 'z']].dropna().values,
         'ground_truth_coords': gt,
-        'outliers': {},
+        'outliers': {'0': []},
     })
-
     return results
-
+    
 
 t0 = time.time()
-# threadpool_limits context must go AROUND the Pool context to limit threads.
-with threadpoolctl.threadpool_limits(**thread_params):
-    with Pool(**parallel_pool_params) as p:
-        results_map = p.map(
-            register_guided, 
-            test_data.groupby('csv_path'),
-            **pmap_params,
-        )
-print(time.time() - t0, 's')
-
+results_map = map(
+    register,
+    test_data.groupby('csv_path'),
+)
 results_df = pd.DataFrame(columns=['result', 'filename'])
 for i, r in enumerate(results_map):
     results_df.loc[i, 'result'] = r['result']
     results_df.loc[i, 'filename'] = r['filename']
 
-results_df['result'].apply(get_angle)
-
-results_df.loc[:, 'scale'] = results_df['result'].apply(get_scale)
-results_df.loc[:, ['angle_z']] = np.vstack(
-    results_df.loc[:, 'result'].apply(get_angle).values.tolist()
-)
-results_df.loc[:, ['translation_x', 'translation_y']] = np.vstack(
-    results_df.loc[:, 'result'].apply(get_translation).values.tolist()
-)
-
-# ## Statistics
-# Get statistics on the results grouped but anonymized submitter names.
-
-results_summary = results_df.drop('result', axis=1)
-
-if 'results_summary' in globals():
-    results_summary.to_csv('./results_summary.csv', index=False) # OUTPUT
-results_summary = pd.read_csv('./results_summary.csv')
-
-
-results_summary['id'] = (
-    results_summary['filename']
-    .str.extract(r'^(R_[a-zA-Z0-9]+)_.*')
-)
-results_summary.drop('filename', axis=1).groupby('id').agg(['mean', 'std'])
-
-
 # Perform linear sum assignment on the registration results, with test points sorted by increasing distance to nearest neigbor in the ground truth. In the case where the scale is close enough to 1.0, don't use the transformed test coordinates and instead use the original submitted coordinates.
-
 t0 = time.time()
 distances = {}
 lsa_indices = {}
-for filename in results_df.dropna(subset='scale')['filename']:
+# for filename in results_df.dropna(subset='scale')['filename']:
+for filename in results_df['filename']:
     test_coords_tf, test_tf, test_coords, gt, outliers = results_df.query(
         'filename == @filename'
     )['result'].iloc[0]
-    kd = KDTree(gt[:, :2])
+    kd = KDTree(gt)
     td = test_coords
     pattern = re.match(r'.*(fish|nuclei).*', filename.lower())
     if pattern is not None:
         scale_xy = scales_map_xy[pattern.group(1)]
     else:
         continue
-    distance, index = kd.query(test_coords_tf[:, :2], k=1, return_distance=True)
+    distance, index = kd.query(test_coords_tf, k=1, return_distance=True)
     distances[filename] = distance
-    dm = distance_matrix(gt[:, :2], test_coords_tf[:, :2])
+    dm = distance_matrix(gt, test_coords_tf)
     lsa_indices[filename] = {}
     lsa_indices[filename]['dm'] = dm
     lsa_indices[filename]['lsa'] = linear_sum_assignment(dm)
-print(time.time() - t0, 's')
-
 
 results_df.iloc[[0], :]['result'].item()
 
-# Instead of doing this, just add the category to another column.
 results_df_success = results_df.drop(results_df[results_df['result'].apply(lambda x: x.test_coords_tf is None)].index)
 results_df_success = pd.concat(
     [
@@ -322,14 +223,10 @@ results_df_success = pd.concat(
 ground_truth = {
     category:
     {
-        dataset: data for (dataset, _), data in ground_truth_coords.groupby(['ground_truth_name', 'path']) if category in dataset
+        dataset: data for (dataset, _), data in ground_truth_coords.groupby(['ground_truth_name', 'path']) if category in dataset  # ty: ignore
     }
     for category in ['fish', 'nuclei']
 }
-
-# ## Registration (in z)
-
-# Calculate the ratio of standard deviations between ground truth and test data.
 
 
 def check_if_close(x):
@@ -353,81 +250,7 @@ def check_if_close(x):
     )
 
 
-# with pd.option_context('display.max_rows', 150):
-#     print(
-#         results_df_success
-#         .groupby(
-#             ['category', 'dataset', 'filename']
-#         )
-#         .apply(check_if_close)
-#     )
-
-
-# The point-spread function sizes are
-
-psf_map_xy = {  # micrometers, max measured (not theoretical)
-    'fish': 0.290,
-    'nuclei': None,
-}
-psf_map_z = {  # micrometers, measured (not theoretical)
-    'fish': 0.182,
-    'nuclei': None,
-}
-
-
-def check_z_scale(x):
-    ratio = (
-        # Original ground truth
-        ground_truth[x['category'].item()][x['dataset'].item()].values[:, 2].std() / 
-        # Original z-coordinates (all)
-        np.vstack(
-            [
-                x['result'].item().test_coords_tf,
-                *list(x['result'].item().outliers.values()),
-            ],
-        )[:, 2].std())
-    scales = [
-        # Correct z scale
-        1.0,
-        # No scaling applied (pixel units)
-        scales_map_z[x['category'].item()],
-        # x-y scale applied instead of z
-        scales_map_z[x['category'].item()] / scales_map_xy[x['category'].item()]
-    ]
-    for s in scales:
-        if np.isclose(ratio, s, rtol=0.1, atol=0.02):
-            print(s, 'isclose')
-            rescaled_test_coords = x['result'].item().test_coords_tf.copy()
-            # Only rescale z if the x-y scale or no scale was applied. If the correct scale was applied, don't touch.
-            if s != scales[0]:
-                rescaled_test_coords[:, 2] = rescaled_test_coords[:, 2] * s
-                rescaled_test_coords[:, 2] += ground_truth[x['category'].item()][x['dataset'].item()].values[:, 2].mean() - rescaled_test_coords[:, 2].mean()
-            return RegistrationResults(**{
-                'test_coords_tf': x['result'].item().test_coords_tf,
-                'test_tf': x['result'].item().test_tf,
-                'test_coords': rescaled_test_coords,
-                'ground_truth_coords': x['result'].item().ground_truth_coords,
-                'outliers': x['result'].item().outliers,
-            })
-    return np.nan
-
-
-with pd.option_context('display.max_rows', 150, 'display.width', 1024):
-    rescaled_results = (
-        results_df_success
-        .groupby(
-            ['category', 'dataset', 'filename']
-        )
-        .apply(lambda x: pd.Series([check_z_scale(x)]))
-        .reset_index()
-    )
-    # Change the column name from 0 to 'result'
-    rescaled_results.columns = [*rescaled_results.columns[:-1], 'result']
-    print(rescaled_results)
-
-
 def do_lsa(row):
-    print(row[0])
     _, x = row
     series = pd.DataFrame.from_dict({'lsa': [linear_sum_assignment(
         distance_matrix(
@@ -440,19 +263,17 @@ def do_lsa(row):
     return df
 
 
-with Pool(**parallel_pool_params) as p:
-    lsa = pd.concat(
-        p.map(do_lsa, rescaled_results.dropna().query('category == "fish"').iterrows()),
-        ignore_index=True,
-    )
+lsa = pd.concat(
+    map(do_lsa, results_df_success.dropna().query('category == "fish"').iterrows()),
+    ignore_index=True,
+)
 
 # Raw data. This data has **not** been registered.
-
-def gen_raw_data() -> pd.DataFrame:
+def gen_raw_data(data) -> pd.DataFrame:
     raw_data_list = []
-    for filename in test_data['filename'].unique():
+    for filename in data['filename'].unique():
         df = pd.DataFrame(columns=['filename', 'result', 'ground_truth_name'])
-        test = test_data[test_data['filename'] == filename]
+        test = data[data['filename'] == filename]
         df['filename'] = [filename]
         df['ground_truth_name'] = [test['ground_truth_name'].iloc[0]]
         ground = ground_truth_coords[ground_truth_coords['ground_truth_name'] == df['ground_truth_name'].iloc[0]]
@@ -463,12 +284,9 @@ def gen_raw_data() -> pd.DataFrame:
             ground_truth_coords=ground[['x', 'y', 'z']].dropna(axis=0, how='any').values,
             outliers={'0': []},
         )]
-        if test[['x', 'y', 'z']].dropna(axis=0, how='any').shape[0] < 5:
-            print(ground)
-            print(test)
         raw_data_list.append(df)
     return pd.concat(raw_data_list, ignore_index=True)
-raw_data = gen_raw_data()
+raw_data = gen_raw_data(raw_data)
 raw_data['analysis_level'] = 'raw_data'
 
 
@@ -488,7 +306,8 @@ def nn_dist(df):
             distance, _ = kd.query(test, k=1, return_distance=True)
             means.append(np.mean(distance))
             stdevs.append(np.std(distance))
-        except ValueError:
+        except ValueError as ve:
+            print('ValueError (l507)', ve, row['filename'].item())
             means.append(np.nan)
             stdevs.append(np.nan)
     df_out = df.copy(deep=True)
@@ -499,9 +318,7 @@ def nn_dist(df):
 
 def lsa_dist_and_jaccard(df):
     """Returns mean and std of lsa distribution."""
-    with threadpoolctl.threadpool_limits(**thread_params):
-        with Pool(**parallel_pool_params) as p:
-            dfs = p.map(_lsa_dist_and_jaccard_helper, iterrows_preserve_dtypes(df), **pmap_params)
+    dfs = map(_lsa_dist_and_jaccard_helper, iterrows_preserve_dtypes(df))
 
     df_out = pd.concat(dfs)
     return df_out
@@ -530,13 +347,15 @@ def _lsa_dist_and_jaccard_helper(df_iter):
         category_match = re.match(r'(fish|nuclei)[1-4]', row['ground_truth_name'].item())
         if category_match is not None:
             category = category_match.group(1)
-            j_distance = np.sqrt(np.sum((displacement / [[psf_map_xy[category]] * 2 + [psf_map_z[category]]])**2, axis=1))
+            j_distance = np.sqrt(np.sum((displacement / [[PSF_MAP_XY[category]] * 2 + [PSF_MAP_Z[category]]])**2, axis=1))
             tp = np.sum(j_distance <= 1)
             fp = (test.shape[0] - ground.shape[0] if test.shape[0] >= ground.shape[0] else 0) \
                + sum(map(len, row['result'].item().outliers.values())) \
                + np.sum(j_distance > 1)
             fn = ground.shape[0] - test.shape[0] if test.shape[0] < ground.shape[0] else 0
             jac = tp / (tp + fp + fn)
+            if jac < 0.5:
+                print(row['filename'].item())
             row['tp'] = [tp]
             row['fp'] = [fp]
             row['fn'] = [fn]
@@ -579,78 +398,21 @@ for units, columns in zip(
             raw_data_results[col + ' (' + units + ')'] = raw_data_results[col].copy()
             raw_data_results.drop(col, axis=1, inplace=True)
 
+corrected_data = gen_raw_data(corrected_data)
+corrected_data['analysis_level'] = 'corrected'
 
-def _get_transformation_helper(df_iter):
-    _, row = df_iter
-    flip_ids = ['R_3lAJ9xY4kGlL99f']
-    try:
-        ground = row['result'].item().ground_truth_coords.astype('float64')
-        test = row['result'].item().test_coords.astype('float64')
-        
-        # Some data needs flipping. I chose to flip the y-direction
-        # but it shouldn't matter after rotation from the
-        # registration.
-        for fid in flip_ids:
-            if fid in str(row['filename'].item()):
-                test = np.hstack([test[:, 0].mean() - test[:, [0]], test[:, [1]], test[:, [2]]])
-                test = (np.array([[0.0, 1.0, 0.0],
-                                 [-1.0, 0.0, 0.0],
-                                 [0.0, 0.0, 1.0]]) @ test.T).T
-                break
-
-        scale = (ground.std(axis=0) / test.std(axis=0))[:2].mean()
-        translation = (ground.mean(axis=0) - test.mean(axis=0))[:2].reshape((1, 2))
-        reg = RigidRegistration(
-            X=ground[:, :2],
-            Y=test[:, :2].copy(),
-            s=scale,
-            t=translation,
-            **registration_params,
-        )
-        test_coords_tf, test_tf = reg.register()
-
-        # Manually register the z coordinates using standard deviation.
-        output_test_coords_tf = np.hstack([test_coords_tf, test[:, [2]]])
-        # First, shift to the origin from the test center.
-        output_test_coords_tf[:, 2] -= test[:, 2].mean()
-        # Second, scale the coordinates to the ground truth scale.
-        output_test_coords_tf[:, 2] *= ground[:, 2].std() / test[:, 2].std()
-        # Third, shift to center of the ground truth.
-        output_test_coords_tf[:, 2] += ground[:, 2].mean()
-        result = RegistrationResults(
-            test_coords_tf=output_test_coords_tf,
-            test_tf=test_tf,
-            test_coords=test,
-            ground_truth_coords=ground,
-            outliers={'0': []},
-        )
-    except (TypeError, ValueError) as error:
-        print(error, row['filename'].item())
-        result = RegistrationResults(
-            test_coords_tf=None,
-            test_tf=None,
-            test_coords=row['result'].item().test_coords,
-            ground_truth_coords=row['result'].item().ground_truth_coords,
-            outliers={'0': []},
-        )
-        # tf = None
-    row['result'] = [result]
-    return row
-        
-
-def get_transformation(df):
-    with threadpoolctl.threadpool_limits(**thread_params):
-        with Pool(**parallel_pool_params) as p:
-            tfs = p.map(_get_transformation_helper, iterrows_preserve_dtypes(df), **pmap_params)
-    df_out = pd.concat(tfs)
-    return df_out
-
-
-fully_transformed_data = get_transformation(raw_data.copy(deep=True))
+fully_transformed_data = gen_raw_data(registered_data)
 fully_transformed_data['analysis_level'] = 'fully_transformed'
 
-nn_full = nn_dist(fully_transformed_data)
+nn_corrected = nn_dist(corrected_data)
+lsa_corrected = lsa_dist_and_jaccard(corrected_data)
 
+corrected_results = corrected_data.join(lsa_corrected.set_index('filename'), on='filename').join(nn_corrected.set_index('filename'), on='filename')
+corrected_results['scale_xy'] = corrected_results['result'].apply(get_scale)
+corrected_results[['translation_x', 'translation_y']] = corrected_results['result'].apply(get_translation)
+corrected_results['angle_xy'] = corrected_results['result'].apply(get_angle)
+
+nn_full = nn_dist(fully_transformed_data)
 lsa_full = lsa_dist_and_jaccard(fully_transformed_data)
 
 fully_transformed_results = fully_transformed_data.join(lsa_full.set_index('filename'), on='filename').join(nn_full.set_index('filename'), on='filename')
@@ -667,12 +429,18 @@ for units, columns in zip(
         ],
 ):
     for col in columns:
+        if col in corrected_results.columns:
+            corrected_results[f'{col} ({units})'] = corrected_results[col].copy()
+            corrected_results.drop(col, axis=1, inplace=True)
+
         if col in fully_transformed_results.columns:
             fully_transformed_results[f'{col} ({units})'] = fully_transformed_results[col].copy()
             fully_transformed_results.drop(col, axis=1, inplace=True)
 
+print(corrected_results[raw_data_results['lsa_mse (um^2)'] == corrected_results['lsa_mse (um^2)']].query('filename.str.contains("fish|FISH")'))
+
 output_stats = pd.concat(
-    [raw_data_results, fully_transformed_results],
+    [raw_data_results, corrected_results, fully_transformed_results],
     ignore_index=True,
 )
 output_stats['id'] = output_stats['filename'].str.extract(r'(R_[0-9A-Za-z]+).*')
